@@ -10,6 +10,10 @@
 (function () {
   'use strict';
 
+  if (window.__mq0807Security && window.__mq0807Security.blocked) {
+    return;
+  }
+
   // ===== DOM =====
   const $ = (s) => document.querySelector(s);
 
@@ -78,6 +82,14 @@
     const hh = clean.length >= 10 ? parseInt(clean.slice(8, 10), 10) : 0;
     const mm = clean.length >= 12 ? parseInt(clean.slice(10, 12), 10) : 0;
     return new Date(y, m, d, hh, mm, 0);
+  }
+
+  function fmtAxisLabel(d) {
+    if (!(d instanceof Date) || Number.isNaN(d.getTime())) return '';
+    const y = d.getFullYear();
+    const m = String(d.getMonth() + 1).padStart(2, '0');
+    const day = String(d.getDate()).padStart(2, '0');
+    return `${y}/${m}/${day}`;
   }
 
   function tsDayKey(ts) {
@@ -674,8 +686,8 @@
         const actEquity  = [];
         const slipCostPerTrade = CFG.pointValue * CFG.slipPerSide * 2;
 
-        const eqX = [0];
-        const eqY = [0];
+        const eqDates = [];
+        const eqValues = [];
         let cumForEq = 0;
 
         trades.forEach((t, idx) => {
@@ -690,8 +702,11 @@
           actEquity.push(cumAct);
 
           cumForEq += actualNet;
-          eqX.push(idx + 1);
-          eqY.push(cumForEq);
+          const exitDate = tsToDate(t.exit.ts);
+          if (exitDate) {
+            eqDates.push(exitDate);
+            eqValues.push(cumForEq);
+          }
         });
 
         const kpiTheo = calcKpi(trades, theoPnls, theoEquity);
@@ -705,7 +720,7 @@
           score,
           kpi: kpiAct,
           kpiTheo,
-          equitySeries: { x: eqX, y: eqY }
+          equityTimeline: { dates: eqDates, values: eqValues }
         });
 
         statusLine.textContent = `計算中…… ${i + 1} / ${files.length}`;
@@ -809,9 +824,9 @@
     }
 
     const top = gResults[0];
-    const eq = top.equitySeries || { x: [], y: [] };
-    const labels = eq.x;
-    const data   = eq.y;
+    const timeline = top.equityTimeline || { dates: [], values: [] };
+    const labels = (timeline.dates || []).map(fmtAxisLabel);
+    const data   = timeline.values || [];
 
     const ctx = scoreChartEl.getContext('2d');
 

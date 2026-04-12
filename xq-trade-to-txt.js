@@ -1,6 +1,10 @@
 (function () {
   'use strict';
 
+  if (window.__mq0807Security && window.__mq0807Security.blocked) {
+    return;
+  }
+
   const $ = (id) => document.getElementById(id);
 
   const els = {

@@ -9,6 +9,10 @@
 (function(){
   'use strict';
 
+  if (window.__mq0807Security && window.__mq0807Security.blocked) {
+    return;
+  }
+
   // ===== 小工具 =====
   var $ = function(s){ return document.querySelector(s); };
   var fmt2 = function(x){ return Number(x||0).toFixed(2); };

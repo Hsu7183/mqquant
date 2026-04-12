@@ -3,104 +3,435 @@
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width,initial-scale=1" />
-  <title>股票-雲端多檔分析</title>
+  <meta name="robots" content="noindex,nofollow" />
+  <meta http-equiv="Referrer-Policy" content="no-referrer" />
+  <meta http-equiv="Cache-Control" content="no-store, max-age=0, must-revalidate" />
+  <meta http-equiv="Pragma" content="no-cache" />
+  <meta http-equiv="Expires" content="0" />
+  <meta name="format-detection" content="telephone=no,email=no,address=no" />
+  <meta http-equiv="Content-Security-Policy"
+    content="default-src 'self';
+             script-src 'self' https://cdn.jsdelivr.net;
+             style-src 'self' 'unsafe-inline';
+             img-src 'self' data:;
+             connect-src 'self';
+             font-src 'self' data:;
+             media-src 'none';
+             object-src 'none';
+             frame-src 'none';
+             worker-src 'none';
+             child-src 'none';
+             frame-ancestors 'none';
+             base-uri 'none';
+             form-action 'self';
+             upgrade-insecure-requests;
+             block-all-mixed-content">
+  <title>MQ Quant 股票策略研究</title>
   <style>
-    body{font-family:ui-sans-serif,system-ui;-webkit-font-smoothing:antialiased;margin:0;padding:16px;background:#f7f7fb}
-    .wrap{max-width:1440px;margin:0 auto}
-    .row{display:flex;gap:12px;align-items:center;flex-wrap:wrap}
-    .card{background:#fff;border:1px solid #e5e7eb;border-radius:12px;box-shadow:0 2px 10px rgba(0,0,0,.03);padding:12px;margin-bottom:16px}
-    .back-link{margin-bottom:12px;display:inline-block}
-    .chip{display:inline-block;background:#eef;padding:6px 10px;border-radius:999px;font-size:12px}
-    table{width:100%;border-collapse:collapse;background:#fff}
-    th,td{padding:8px 10px;border-bottom:1px solid #e5e7eb;white-space:nowrap;font:13px/1.65 ui-monospace,Consolas,Menlo,monospace}
-    thead th{background:#fafafa;position:sticky;top:0;z-index:2;cursor:pointer}
-    .num{text-align:right}
-    .p-red{color:#ef4444;font-weight:700}
-    .p-green{color:#10b981;font-weight:700}
-    .active-row{background:#f1f5ff !important}
-    .hint{opacity:.75;font-size:12px}
-    #chartBox{height:380px}
-    .btn{background:#0d6efd;color:#fff;border:0;border-radius:10px;padding:8px 12px;cursor:pointer;font-size:13px}
-    .btn.gray{background:#6c757d}
-    .btn:disabled{opacity:.5;cursor:not-allowed}
-    .input{padding:6px 8px;border:1px solid #ddd;border-radius:8px;font-size:13px}
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Noto Sans TC",
+                   "Microsoft JhengHei", sans-serif;
+      background: #f5f5f5;
+      padding: 8px;
+      -webkit-font-smoothing: antialiased;
+    }
+
+    body.secure-pending .wrap {
+      visibility: hidden;
+    }
+
+    body.security-blocked {
+      margin: 0;
+      min-height: 100vh;
+      padding: 0;
+      background: linear-gradient(180deg, #f8fafc 0%, #eef2ff 100%);
+    }
+
+    body.security-blocked .wrap {
+      display: none;
+    }
+
+    .security-shield {
+      position: fixed;
+      inset: 0;
+      z-index: 9999;
+      display: none;
+      align-items: center;
+      justify-content: center;
+      padding: 24px;
+      background: rgba(15, 23, 42, 0.72);
+      backdrop-filter: blur(10px);
+    }
+
+    body.security-blocked .security-shield,
+    body.secure-pending .security-shield {
+      display: flex;
+    }
+
+    .security-shield-card {
+      width: min(520px, 100%);
+      padding: 28px 24px;
+      border-radius: 20px;
+      border: 1px solid rgba(148, 163, 184, 0.24);
+      background: rgba(15, 23, 42, 0.96);
+      box-shadow: 0 24px 60px rgba(15, 23, 42, 0.35);
+      color: #e2e8f0;
+    }
+
+    .security-shield-kicker {
+      margin: 0 0 10px;
+      font-size: 11px;
+      font-weight: 800;
+      letter-spacing: .22em;
+      color: #93c5fd;
+    }
+
+    .security-shield-title {
+      margin: 0 0 12px;
+      font-size: 28px;
+      line-height: 1.15;
+      font-weight: 900;
+      color: #f8fafc;
+    }
+
+    .security-shield-text {
+      margin: 0 0 18px;
+      font-size: 14px;
+      line-height: 1.8;
+      color: #cbd5e1;
+    }
+
+    .security-shield-actions {
+      display: flex;
+      gap: 10px;
+      flex-wrap: wrap;
+    }
+
+    .security-shield-actions .btn {
+      padding: 8px 14px;
+      font-size: 13px;
+    }
+
+    .wrap {
+      max-width: 1440px;
+      margin: 0 auto;
+    }
+
+    .hero {
+      background: linear-gradient(135deg,#eff6ff 0%,#ffffff 55%,#f0fdf4 100%);
+      border: 1px solid #dbeafe;
+      border-radius: 22px;
+      box-shadow: 0 8px 24px rgba(15,23,42,.06);
+      padding: 22px 24px;
+      margin-bottom: 18px;
+    }
+
+    .title {
+      font-size: 32px;
+      font-weight: 900;
+      color: #0f4fd6;
+      margin: 0 0 8px;
+      letter-spacing: .3px;
+    }
+
+    .sub {
+      color: #475569;
+      line-height: 1.8;
+      margin: 0;
+      font-size: 15px;
+    }
+
+    .card {
+      background: #fff;
+      border: 1px solid #e5e7eb;
+      border-radius: 16px;
+      box-shadow: 0 8px 24px rgba(15,23,42,.06);
+      padding: 18px;
+      margin-bottom: 18px;
+    }
+
+    .section-title {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      font-size: 22px;
+      font-weight: 900;
+      margin: 0 0 14px;
+    }
+
+    .section-title.blue { color: #2563eb; }
+    .grid2 {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 16px;
+    }
+
+    .grid3 {
+      display: grid;
+      grid-template-columns: repeat(3, 1fr);
+      gap: 16px;
+    }
+
+    .filebox {
+      border: 1px dashed #cbd5e1;
+      border-radius: 14px;
+      padding: 16px;
+      background: #fafcff;
+      min-height: 210px;
+      display: flex;
+      flex-direction: column;
+    }
+
+    .block-title {
+      font-size: 18px;
+      font-weight: 900;
+      margin: 0 0 8px;
+      color: #111827;
+    }
+
+    .hint {
+      font-size: 13px;
+      color: #6b7280;
+      line-height: 1.7;
+      margin: 0 0 10px;
+    }
+
+    .fname {
+      font-size: 13px;
+      color: #334155;
+      margin-top: 8px;
+      word-break: break-all;
+      min-height: 20px;
+      line-height: 1.6;
+      white-space: pre-wrap;
+    }
+
+    .action-row {
+      display: flex;
+      gap: 10px;
+      flex-wrap: wrap;
+      margin-top: 12px;
+    }
+
+    .btn {
+      appearance: none;
+      border: 0;
+      border-radius: 12px;
+      padding: 11px 16px;
+      cursor: pointer;
+      font-weight: 800;
+      color: #fff;
+      transition: transform .12s ease, box-shadow .12s ease, opacity .12s ease;
+      box-shadow: 0 6px 16px rgba(0,0,0,.10);
+      background: #2563eb;
+    }
+
+    .btn:hover {
+      transform: translateY(-1px);
+      opacity: .96;
+    }
+
+    .chip {
+      display: inline-block;
+      background: #eef;
+      padding: 6px 10px;
+      border-radius: 999px;
+      font-size: 12px;
+    }
+
+    .chart-main-with-range {
+      display: flex;
+      flex-direction: column;
+      gap: 8px;
+    }
+
+    .equity-range-inline {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      flex-wrap: wrap;
+      min-height: 24px;
+    }
+
+    .range-group-tabs,
+    .range-chip-list {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 6px;
+      align-items: center;
+    }
+
+    .range-group-tab,
+    .range-chip,
+    .equity-range-reset {
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      min-height: 28px;
+      padding: 0 10px;
+      border: 1px solid #d1d5db;
+      border-radius: 999px;
+      background: #fff;
+      color: #1f2937;
+      font-size: 12px;
+      font-weight: 700;
+      line-height: 1;
+      cursor: pointer;
+      transition: all .15s ease;
+    }
+
+    .range-chip {
+      padding: 0 12px;
+    }
+
+    .range-group-tab.is-active,
+    .range-chip.is-active,
+    .equity-range-reset.is-active {
+      background: #2f5ed9;
+      border-color: #2f5ed9;
+      color: #fff;
+    }
+
+    .range-chip:disabled {
+      cursor: not-allowed;
+      opacity: .45;
+    }
+
+    .equity-period-note {
+      display: none;
+    }
+
+    #chartBox {
+      height: 420px;
+    }
+
+    table {
+      width: 100%;
+      border-collapse: collapse;
+      background: #fff;
+    }
+
+    th, td {
+      padding: 8px 10px;
+      border-bottom: 1px solid #e5e7eb;
+      white-space: nowrap;
+      font: 13px/1.65 ui-monospace, Consolas, Menlo, monospace;
+    }
+
+    thead th {
+      background: #fafafa;
+      position: sticky;
+      top: 0;
+      z-index: 2;
+      cursor: pointer;
+    }
+
+    .num { text-align: right; }
+    .p-red { color: #ef4444; font-weight: 700; }
+    .p-green { color: #10b981; font-weight: 700; }
+    .active-row { background: #f1f5ff !important; }
+
+    .table-wrap {
+      border: 1px solid #e5e7eb;
+      border-radius: 12px;
+      overflow: auto;
+      max-height: 720px;
+      background: #fff;
+    }
+
+    @media (max-width: 1100px) {
+      .grid2, .grid3 { grid-template-columns: 1fr; }
+      .title { font-size: 28px; }
+      .filebox { min-height: auto; }
+    }
   </style>
-  <!-- 依賴 -->
   <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
 </head>
-<body>
+<body class="secure-pending">
+  <div id="securityShield" class="security-shield" aria-live="polite" aria-hidden="true"></div>
+
   <div class="wrap">
-    <a class="back-link" href="index.html">← 返回首頁</a>
-    <h1>股票-雲端多檔分析</h1>
-    <div class="hint" style="margin:4px 0 10px 0">
-      來源：指標 TXT（稅後損益＋累積損益）｜本頁僅供內部研究
+    <div class="hero">
+      <h1 class="title">股票策略研究</h1>
+      <p class="sub">載入多個股票策略 TXT 後，可依最佳分數策略檢視累積損益與每週區間表現，並用同一套安全規則保護頁面。</p>
     </div>
 
-    <!-- 控制列 -->
-    <div class="row card">
-      <!-- 只保留「選擇檔案」 -->
-      <div class="row">
-        <input id="files" type="file" accept=".txt" multiple />
-      </div>
-
-      <!-- 參數 chips（保留費率/稅率/最低手續費/單位股數） -->
-      <div class="row">
-        <span class="chip">已載入：<span id="fileCount">0</span> 檔</span>
-        <span class="chip">匯入時間：<span id="importAt">—</span></span>
-        <span class="chip">手續費率：<span id="feeRateChip">—</span></span>
-        <span class="chip">交易稅率：<span id="taxRateChip">—</span></span>
-        <span class="chip">最低手續費：<span id="minFeeChip">—</span></span>
-        <span class="chip">預設單位股數：<span id="unitChip">—</span></span>
-      </div>
-    </div>
-
-    <!-- 上：每週盈虧圖 -->
     <div class="card">
-      <h3 style="margin:0 0 4px 0;font-size:16px">每週獲利（浮動長條）＋累積獲利（折線）</h3>
+      <h2 class="section-title blue">資料載入</h2>
+      <div class="grid2">
+        <div class="filebox">
+          <div class="block-title">本機 TXT</div>
+          <p class="hint">選擇多個包含「稅後損益=」「累積損益=」「MAE%=」資料列的 TXT 檔。</p>
+          <div class="action-row">
+            <input id="files" type="file" accept=".txt" multiple />
+          </div>
+          <div class="fname">已載入檔數：<span id="fileCount">0</span></div>
+          <div class="fname">匯入時間：<span id="importAt">—</span></div>
+        </div>
+        <div class="filebox">
+          <div class="block-title">固定參數</div>
+          <p class="hint">這頁會沿用既有股票策略參數設定，供分數、圖表與明細同步使用。</p>
+          <div class="action-row">
+            <span class="chip">手續費率 <span id="feeRateChip">—</span></span>
+            <span class="chip">交易稅率 <span id="taxRateChip">—</span></span>
+            <span class="chip">最低手續費 <span id="minFeeChip">—</span></span>
+            <span class="chip">每單位股數 <span id="unitChip">—</span></span>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <div class="card chart-main-with-range">
+      <h2 class="section-title blue">圖表分析</h2>
+      <div class="equity-range-inline">
+        <div class="range-group-tabs" id="periodGroupTabs">
+          <button type="button" class="range-group-tab is-active" data-range-group="week">週</button>
+          <button type="button" class="range-group-tab" data-range-group="month">月</button>
+          <button type="button" class="range-group-tab" data-range-group="year">年</button>
+          <button type="button" class="equity-range-reset is-active" id="perf-resetBtn">全部</button>
+        </div>
+        <div class="range-chip-list" id="periodChipList"></div>
+        <div class="equity-period-note" id="equityPeriodNote" aria-live="polite"></div>
+      </div>
       <div id="chartBox"><canvas id="chart"></canvas></div>
       <div id="chartCaption" class="hint" style="margin-top:4px">
-        （點擊下方任一列，上方圖切換顯示；直接使用 TXT 的稅後損益與累積損益）
+        尚未載入檔案，請先選擇股票策略 TXT。
       </div>
     </div>
 
-    <!-- 下：精簡彙總表（可排序、點選切換上方圖）＋ Score＋ 詳細 KPI -->
     <div class="card">
-
-      <!-- 🏆 最佳參數卡片 -->
       <div id="bestCard" style="margin-bottom:10px;padding:8px 10px;border-radius:8px;background:#f9fafb;border:1px dashed #e5e7eb;font-size:13px;display:none">
-        <div style="font-weight:600;margin-bottom:4px;">🏆 最佳參數組</div>
+        <div style="font-weight:600;margin-bottom:4px;">最佳參數摘要</div>
         <div id="bestMain"></div>
         <div id="bestSub" class="hint" style="margin-top:4px;font-size:12px"></div>
       </div>
 
-      <table id="sumTable">
-        <thead>
-          <tr>
-            <th data-k="shortName">檔名</th>
-            <th class="num" data-k="score">Score</th>
-            <th class="num" data-k="pf">PF</th>
-            <th class="num" data-k="mar">MAR</th>
-            <th class="num" data-k="maxDDAbs">MaxDD</th>
-            <th class="num" data-k="maeAvgAbs">Avg&nbsp;MAE%</th>
-            <th class="num" data-k="total">累積淨損益</th>
-            <th class="num" data-k="sr">Sharpe</th>
-            <th class="num" data-k="so">Sortino</th>
-            <th class="num" data-k="expectancy">期望值/筆</th>
-            <th class="num" data-k="payoff">Payoff</th>
-            <th class="num" data-k="hitRate">勝率</th>
-            <th class="num" data-k="tradesPerMonth">交易頻率（月筆數）</th>
-            <th class="num" data-k="annRet">年化報酬</th>
-            <th class="num" data-k="annVol">年化波動</th>
-            <th class="num" data-k="tradeCount">筆數</th>
-          </tr>
-        </thead>
-        <tbody></tbody>
-      </table>
-      <div class="hint" style="margin-top:8px">
-        提示：點欄位可升/降序；再次點擊同欄切換排序方向。Score 為 PF / MAR / MaxDD / AvgMAE% / Sharpe / Sortino / 期望值 / Payoff / 勝率 / 交易頻率 的綜合分數（0–100），MAE 採用每筆交易 MAE% 絕對值的平均。
+      <div class="table-wrap">
+        <table id="sumTable">
+          <thead>
+            <tr>
+              <th data-k="shortName">檔名</th>
+              <th class="num" data-k="score">Score</th>
+              <th class="num" data-k="pf">PF</th>
+              <th class="num" data-k="mar">MAR</th>
+              <th class="num" data-k="maxDDAbs">MaxDD</th>
+              <th class="num" data-k="maeAvgAbs">Avg MAE%</th>
+              <th class="num" data-k="total">累積損益</th>
+              <th class="num" data-k="sr">Sharpe</th>
+              <th class="num" data-k="so">Sortino</th>
+              <th class="num" data-k="expectancy">期望值</th>
+              <th class="num" data-k="payoff">Payoff</th>
+              <th class="num" data-k="hitRate">勝率</th>
+              <th class="num" data-k="tradesPerMonth">月筆數</th>
+              <th class="num" data-k="annRet">年化報酬</th>
+              <th class="num" data-k="annVol">年化波動</th>
+              <th class="num" data-k="tradeCount">筆數</th>
+            </tr>
+          </thead>
+          <tbody></tbody>
+        </table>
       </div>
 
-      <!-- 詳細 KPI 區塊（選擇一檔後顯示） -->
       <div id="kpiDetail" style="margin-top:12px;font-size:13px;line-height:1.7;display:none">
         <div><strong id="kpiName"></strong></div>
         <div id="kpiBody" class="hint" style="margin-top:4px;font-size:12px"></div>
@@ -108,6 +439,8 @@
     </div>
   </div>
 
-  <script src="stock-multi-cloud.js?v=stock-multi-score-mae-v1"></script>
+  <script src="0807-security.js?v=20260412-sec03"></script>
+  <script src="stock-multi-cloud.js?v=20260412-range02"></script>
+  <script src="stock-multi-cloud-page.js?v=20260412-range01"></script>
 </body>
 </html>

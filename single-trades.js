@@ -1,5 +1,5 @@
 // single-trades.js
-// 三劍客量化科技機構級單檔分析：KPI + 每週資產曲線 + 交易明細
+// MQ Quant 機構級單檔分析：KPI + 每週資產曲線 + 交易明細
 // 最終版：
 // 1. 嚴格依 action 語義配對（新買/新賣/平賣/平買/強制平倉）
 // 2. 避免新賣被誤翻成新買
@@ -10,6 +10,10 @@
 
 (function () {
   'use strict';
+
+  if (window.__mq0807Security && window.__mq0807Security.blocked) {
+    return;
+  }
 
   const CFG = {
     pointValue: 200,
@@ -23,6 +27,8 @@
   let gFile   = null;
   let gChart  = null;
   let gWeeklyChart = null;
+  let gChartSource = null;
+  let gEquityAxisSource = null;
 
   const $ = (s) => document.querySelector(s);
 
@@ -751,7 +757,7 @@
     renderScore(score);
   }
 
-  function aggregateWeekly(dates, series) {
+  function aggregateWeekly(dates, series, includeBaseline) {
     const outDates = [];
     const outVals  = [];
     let prevKey = null;
@@ -774,28 +780,48 @@
       outDates.push(lastDate);
       outVals.push(lastVal);
     }
-    if (outDates.length > 0) {
+    if (includeBaseline !== false && outDates.length > 0) {
       outDates.unshift(outDates[0]);
       outVals.unshift(0);
     }
     return { dates: outDates, vals: outVals };
   }
 
+  function deriveWeeklyPnlsFromCumulative(vals) {
+    if (!Array.isArray(vals) || !vals.length) return [];
+    const out = [];
+    for (let i = 0; i < vals.length; i++) {
+      const curr = Number(vals[i]);
+      if (!Number.isFinite(curr)) {
+        out.push(null);
+        continue;
+      }
+      if (i === 0) {
+        out.push(curr);
+        continue;
+      }
+      const prev = Number(vals[i - 1]);
+      out.push(Number.isFinite(prev) ? curr - prev : curr);
+    }
+    return out;
+  }
+
   function renderEquityChartWeekly(exitDates, totalTheo, totalAct,
-                                   longTheo, longAct, shortTheo, shortAct) {
+                                   longTheo, longAct, shortTheo, shortAct,
+                                   includeBaseline) {
     const canvas = document.getElementById('equityChart');
     if (!canvas || !window.Chart) return;
     const ctx = canvas.getContext('2d');
 
-    const aggTotalTheo  = aggregateWeekly(exitDates, totalTheo);
-    const aggTotalAct   = aggregateWeekly(exitDates, totalAct);
-    const aggLongTheo   = aggregateWeekly(exitDates, longTheo);
-    const aggLongAct    = aggregateWeekly(exitDates, longAct);
-    const aggShortTheo  = aggregateWeekly(exitDates, shortTheo);
-    const aggShortAct   = aggregateWeekly(exitDates, shortAct);
+    const aggTotalTheo  = aggregateWeekly(exitDates, totalTheo, includeBaseline);
+    const aggTotalAct   = aggregateWeekly(exitDates, totalAct, includeBaseline);
+    const aggLongTheo   = aggregateWeekly(exitDates, longTheo, includeBaseline);
+    const aggLongAct    = aggregateWeekly(exitDates, longAct, includeBaseline);
+    const aggShortTheo  = aggregateWeekly(exitDates, shortTheo, includeBaseline);
+    const aggShortAct   = aggregateWeekly(exitDates, shortAct, includeBaseline);
 
     const weekDates = aggTotalAct.dates;
-    const labels    = aggTotalAct.vals.map((_, i) => i + 1);
+    const labels    = aggTotalAct.vals.map((_, i) => String(i + 1));
 
     let maxVal = -Infinity, minVal = Infinity;
     let maxIdx = null, minIdx = null;
@@ -822,6 +848,14 @@
         tickIndexToLabel[idx] = `${d.getFullYear()}/${d.getMonth() + 1}`;
       });
     }
+
+    gEquityAxisSource = {
+      dates: weekDates.slice(),
+      labels: labels.slice(),
+      tickIndexToLabel: { ...tickIndexToLabel },
+      totalActVals: aggTotalAct.vals.slice(),
+      weeklyPnls: deriveWeeklyPnlsFromCumulative(aggTotalAct.vals)
+    };
 
     gChart = new Chart(ctx, {
       type: 'line',
@@ -863,63 +897,133 @@
         },
         scales: {
           x: {
+            type: 'category',
             display: true,
+            offset: true,
             title: { display: true, text: '日期' },
+            grid: {
+              offset: true
+            },
             ticks: {
               autoSkip: false,
               maxRotation: 0,
               minRotation: 0,
-              callback: function (value, index) {
+              stepSize: 1,
+              callback: function (_value, index) {
                 return tickIndexToLabel[index] || '';
               }
             }
           },
           y: {
             display: true,
-            title: { display: true, text: '累積損益（金額）' }
+            title: { display: true, text: '累積損益（金額）' },
+            afterFit: function (scale) {
+              scale.width = 78;
+            }
           }
         }
       }
     });
   }
 
-  function renderWeeklyPnlChart(weekDates, weekPnls) {
+  function renderWeeklyPnlChart(weekDates, weekPnls, axisSource) {
     const canvas = document.getElementById('weeklyPnlChart');
     if (!canvas || !window.Chart) return;
     const ctx = canvas.getContext('2d');
 
     if (gWeeklyChart) {
-      gWeeklyChart.destroy();
+      try {
+        gWeeklyChart.destroy();
+      } catch (err) {
+        console.warn('weekly chart destroy warning', err);
+      }
       gWeeklyChart = null;
+    }
+
+    const existingChart = typeof window.Chart.getChart === 'function'
+      ? window.Chart.getChart(canvas)
+      : null;
+    if (existingChart) {
+      try {
+        existingChart.destroy();
+      } catch (err) {
+        console.warn('existing weekly chart destroy warning', err);
+      }
     }
 
     if (!weekDates.length) return;
 
-    const labels = weekDates.map((d, i) => i + 1);
-    const tickIndexToLabel = {};
-    const last = weekDates.length - 1;
-    [0, 0.25, 0.5, 0.75, 1].forEach(r => {
-      const idx = Math.round(last * r);
-      const d = weekDates[idx];
-      if (!d) return;
-      tickIndexToLabel[idx] = `${d.getFullYear()}/${d.getMonth() + 1}`;
-    });
+    let labels = weekDates.map((_, i) => String(i + 1));
+    let refDates = weekDates.slice();
+    let tickIndexToLabel = {};
+    let alignedPnls = weekPnls.map((v) => (Number.isFinite(Number(v)) ? Number(v) : null));
 
-    const pos = weekPnls.map(v => (v > 0 ? v : null));
-    const neg = weekPnls.map(v => (v < 0 ? v : null));
+    if (axisSource && Array.isArray(axisSource.dates) && axisSource.dates.length) {
+      refDates = axisSource.dates.slice();
+      labels = Array.isArray(axisSource.labels) && axisSource.labels.length
+        ? axisSource.labels.slice()
+        : axisSource.dates.map((_, i) => String(i + 1));
+      tickIndexToLabel = { ...(axisSource.tickIndexToLabel || {}) };
+
+      const pnlByWeekKey = new Map();
+      for (let i = 0; i < weekDates.length; i++) {
+        const d = weekDates[i];
+        if (!d) continue;
+        pnlByWeekKey.set(dateWeekKey(d), alignedPnls[i]);
+      }
+
+      alignedPnls = axisSource.dates.map((d) => {
+        if (!(d instanceof Date)) return null;
+        const key = dateWeekKey(d);
+        return pnlByWeekKey.has(key) ? pnlByWeekKey.get(key) : null;
+      });
+    } else {
+      const last = weekDates.length - 1;
+      [0, 0.25, 0.5, 0.75, 1].forEach((r) => {
+        const idx = Math.round(last * r);
+        const d = weekDates[idx];
+        if (!d) return;
+        tickIndexToLabel[idx] = `${d.getFullYear()}/${d.getMonth() + 1}`;
+      });
+    }
+
+    const barColors = alignedPnls.map((v) => {
+      if (!Number.isFinite(v) || v === 0) return 'rgba(0,0,0,0)';
+      return v > 0 ? 'rgba(220,0,0,0.8)' : 'rgba(0,150,0,0.8)';
+    });
+    const borderColors = alignedPnls.map((v) => {
+      if (!Number.isFinite(v) || v === 0) return 'rgba(0,0,0,0)';
+      return v > 0 ? 'rgba(220,0,0,1)' : 'rgba(0,150,0,1)';
+    });
+    const rightPadding = (
+      gChart &&
+      Number.isFinite(gChart.width) &&
+      gChart.chartArea &&
+      Number.isFinite(gChart.chartArea.right)
+    ) ? Math.max(0, Math.round(gChart.width - gChart.chartArea.right)) : 0;
 
     gWeeklyChart = new Chart(ctx, {
       type: 'bar',
       data: {
         labels,
         datasets: [
-          { label: '每週獲利（>0）', data: pos, borderColor: 'rgba(220,0,0,1)', backgroundColor: 'rgba(220,0,0,0.8)', borderWidth: 1, barPercentage: 0.7, categoryPercentage: 0.9 },
-          { label: '每週虧損（<0）', data: neg, borderColor: 'rgba(0,150,0,1)', backgroundColor: 'rgba(0,150,0,0.8)', borderWidth: 1, barPercentage: 0.7, categoryPercentage: 0.9 }
+          {
+            label: '每週損益',
+            data: alignedPnls,
+            borderColor: borderColors,
+            backgroundColor: barColors,
+            borderWidth: 1,
+            barPercentage: 0.7,
+            categoryPercentage: 0.9
+          }
         ]
       },
       options: {
         responsive: true,
         maintainAspectRatio: false,
+        layout: {
+          padding: { right: rightPadding }
+        },
         interaction: { mode: 'index', intersect: false },
         plugins: {
           legend: { display: true, position: 'top' },
@@ -927,7 +1031,7 @@
             callbacks: {
               title: function (items) {
                 const idx = items[0].dataIndex;
-                const d = weekDates[idx];
+                const d = refDates[idx];
                 if (!d) return '';
                 const y = d.getFullYear();
                 const m = (d.getMonth() + 1).toString().padStart(2, '0');
@@ -935,20 +1039,24 @@
                 return `${y}/${m}/${day}`;
               },
               label: function (ctx) {
-                return `${ctx.dataset.label}: ${fmtInt(ctx.parsed.y)}`;
+                return `每週損益: ${fmtInt(ctx.parsed.y)}`;
               }
             }
           }
         },
         scales: {
           x: {
+            type: 'category',
             display: true,
+            offset: true,
+            grid: { offset: true },
             title: { display: true, text: '週期' },
             ticks: {
               autoSkip: false,
               maxRotation: 0,
               minRotation: 0,
-              callback: function (value, index) {
+              stepSize: 1,
+              callback: function (_value, index) {
                 return tickIndexToLabel[index] || '';
               }
             }
@@ -956,11 +1064,302 @@
           y: {
             display: true,
             title: { display: true, text: '每週損益（金額）' },
-            grid: { zeroLineWidth: 1 }
+            grid: { zeroLineWidth: 1 },
+            afterFit: function (scale) {
+              scale.width = 78;
+            }
           }
         }
       }
     });
+  }
+
+  function cloneRangeDate(d) {
+    return d instanceof Date ? new Date(d.getTime()) : null;
+  }
+
+  function filterEquitySource(source, range) {
+    if (!source) return null;
+    if (!range) {
+      return {
+        dates: source.dates.slice(),
+        totalTheo: source.totalTheo.slice(),
+        totalAct: source.totalAct.slice(),
+        longTheo: source.longTheo.slice(),
+        longAct: source.longAct.slice(),
+        shortTheo: source.shortTheo.slice(),
+        shortAct: source.shortAct.slice()
+      };
+    }
+
+    let baseTotalTheo = 0;
+    let baseTotalAct = 0;
+    let baseLongTheo = 0;
+    let baseLongAct = 0;
+    let baseShortTheo = 0;
+    let baseShortAct = 0;
+
+    for (let i = 0; i < source.dates.length; i++) {
+      const d = source.dates[i];
+      if (!d) continue;
+      if (d.getTime() < range.start.getTime()) {
+        baseTotalTheo = source.totalTheo[i];
+        baseTotalAct = source.totalAct[i];
+        baseLongTheo = source.longTheo[i];
+        baseLongAct = source.longAct[i];
+        baseShortTheo = source.shortTheo[i];
+        baseShortAct = source.shortAct[i];
+      }
+    }
+
+    const dates = [];
+    const totalTheo = [];
+    const totalAct = [];
+    const longTheo = [];
+    const longAct = [];
+    const shortTheo = [];
+    const shortAct = [];
+
+    for (let i = 0; i < source.dates.length; i++) {
+      const d = source.dates[i];
+      if (!d) continue;
+      const t = d.getTime();
+      if (t < range.start.getTime() || t > range.end.getTime()) continue;
+      dates.push(cloneRangeDate(d));
+      totalTheo.push(source.totalTheo[i] - baseTotalTheo);
+      totalAct.push(source.totalAct[i] - baseTotalAct);
+      longTheo.push(source.longTheo[i] - baseLongTheo);
+      longAct.push(source.longAct[i] - baseLongAct);
+      shortTheo.push(source.shortTheo[i] - baseShortTheo);
+      shortAct.push(source.shortAct[i] - baseShortAct);
+    }
+
+    return {
+      dates,
+      totalTheo,
+      totalAct,
+      longTheo,
+      longAct,
+      shortTheo,
+      shortAct
+    };
+  }
+
+  function filterWeeklySource(source, range) {
+    if (!source) return null;
+    if (!range) {
+      return {
+        dates: source.dates.slice(),
+        pnls: source.pnls.slice()
+      };
+    }
+
+    const dates = [];
+    const pnls = [];
+    for (let i = 0; i < source.dates.length; i++) {
+      const d = source.dates[i];
+      if (!d) continue;
+      const t = d.getTime();
+      if (t < range.start.getTime() || t > range.end.getTime()) continue;
+      dates.push(cloneRangeDate(d));
+      pnls.push(source.pnls[i]);
+    }
+
+    return { dates, pnls };
+  }
+
+  function buildAlignedWeeklySource(equitySource, weeklySource) {
+    if (!equitySource || !weeklySource) return weeklySource;
+
+    const aggEquity = aggregateWeekly(equitySource.dates, equitySource.totalAct);
+    if (!aggEquity || !Array.isArray(aggEquity.dates) || !aggEquity.dates.length) {
+      return weeklySource;
+    }
+
+    const pnlByWeekKey = new Map();
+    for (let i = 0; i < weeklySource.dates.length; i++) {
+      const d = weeklySource.dates[i];
+      if (!d) continue;
+      pnlByWeekKey.set(dateWeekKey(d), weeklySource.pnls[i] ?? null);
+    }
+
+    const dates = [];
+    const pnls = [];
+
+    aggEquity.dates.forEach((d, index) => {
+      dates.push(cloneRangeDate(d));
+      if (index === 0) {
+        pnls.push(null);
+        return;
+      }
+      pnls.push(pnlByWeekKey.has(dateWeekKey(d)) ? pnlByWeekKey.get(dateWeekKey(d)) : null);
+    });
+
+    return { dates, pnls };
+  }
+
+  function trimRangeLeadingWeekPoint() {
+    if (!gChart || !gEquityAxisSource || !Array.isArray(gEquityAxisSource.dates) || gEquityAxisSource.dates.length < 2) {
+      return;
+    }
+
+    const firstDate = gEquityAxisSource.dates[0];
+    const secondDate = gEquityAxisSource.dates[1];
+    if (!firstDate || !secondDate) return;
+    if (dateWeekKey(firstDate) !== dateWeekKey(secondDate)) return;
+
+    gEquityAxisSource = {
+      dates: gEquityAxisSource.dates.slice(1),
+      labels: gEquityAxisSource.labels.slice(1),
+      totalActVals: Array.isArray(gEquityAxisSource.totalActVals) ? gEquityAxisSource.totalActVals.slice(1) : [],
+      weeklyPnls: Array.isArray(gEquityAxisSource.weeklyPnls) ? gEquityAxisSource.weeklyPnls.slice(1) : [],
+      tickIndexToLabel: Object.keys(gEquityAxisSource.tickIndexToLabel || {}).reduce((acc, key) => {
+        const nextIndex = Number(key) - 1;
+        if (Number.isFinite(nextIndex) && nextIndex >= 0) {
+          acc[nextIndex] = gEquityAxisSource.tickIndexToLabel[key];
+        }
+        return acc;
+      }, {})
+    };
+
+    gChart.data.labels = gChart.data.labels.slice(1);
+    gChart.data.datasets.forEach((dataset) => {
+      if (Array.isArray(dataset.data)) {
+        dataset.data = dataset.data.slice(1);
+      }
+    });
+
+    if (gChart.options && gChart.options.plugins && gChart.options.plugins.tooltip) {
+      gChart.options.plugins.tooltip.callbacks = gChart.options.plugins.tooltip.callbacks || {};
+      gChart.options.plugins.tooltip.callbacks.title = function (items) {
+        const d = gEquityAxisSource.dates[items[0].dataIndex];
+        if (!d) return '';
+        const y = d.getFullYear();
+        const m = (d.getMonth() + 1).toString().padStart(2, '0');
+        const day = d.getDate().toString().padStart(2, '0');
+        return `${y}/${m}/${day}`;
+      };
+    }
+
+    if (gChart.options && gChart.options.scales && gChart.options.scales.x && gChart.options.scales.x.ticks) {
+      gChart.options.scales.x.ticks.callback = function (value, index) {
+        return gEquityAxisSource.tickIndexToLabel[index] || '';
+      };
+    }
+
+    gChart.update();
+  }
+
+  function buildDisplayedWeeklyPnlSource() {
+    if (!gEquityAxisSource || !Array.isArray(gEquityAxisSource.dates) || !gEquityAxisSource.dates.length) {
+      return null;
+    }
+
+    const dates = gEquityAxisSource.dates.slice();
+    const labels = (
+      Array.isArray(gEquityAxisSource.labels) &&
+      gEquityAxisSource.labels.length === dates.length
+    )
+      ? gEquityAxisSource.labels.slice()
+      : (
+        Array.isArray(gChart && gChart.data && gChart.data.labels) &&
+        gChart.data.labels.length === dates.length
+      )
+        ? gChart.data.labels.slice()
+        : dates.map((_, i) => String(i + 1));
+
+    if (
+      Array.isArray(gEquityAxisSource.weeklyPnls) &&
+      gEquityAxisSource.weeklyPnls.length === dates.length
+    ) {
+      return {
+        dates,
+        labels,
+        tickIndexToLabel: { ...(gEquityAxisSource.tickIndexToLabel || {}) },
+        pnls: gEquityAxisSource.weeklyPnls.map((v) => (Number.isFinite(Number(v)) ? Number(v) : null))
+      };
+    }
+
+    const totalVals = (
+      Array.isArray(gEquityAxisSource.totalActVals) &&
+      gEquityAxisSource.totalActVals.length === dates.length
+    )
+      ? gEquityAxisSource.totalActVals.slice()
+      : (
+        gChart &&
+        gChart.data &&
+        Array.isArray(gChart.data.datasets) &&
+        gChart.data.datasets[0] &&
+        Array.isArray(gChart.data.datasets[0].data) &&
+        gChart.data.datasets[0].data.length === dates.length
+      )
+        ? gChart.data.datasets[0].data.map((v) => (Number.isFinite(Number(v)) ? Number(v) : null))
+        : [];
+
+    if (!totalVals.length || totalVals.length !== dates.length) return null;
+
+    const pnls = totalVals.map((curr, index) => {
+      if (!Number.isFinite(curr)) return null;
+      if (index === 0) return curr;
+      const prev = totalVals[index - 1];
+      return Number.isFinite(prev) ? curr - prev : curr;
+    });
+
+    return {
+      dates,
+      labels,
+      tickIndexToLabel: { ...(gEquityAxisSource.tickIndexToLabel || {}) },
+      pnls
+    };
+  }
+
+  function hasRenderableWeeklyValues(source) {
+    return !!(
+      source &&
+      Array.isArray(source.dates) &&
+      source.dates.length &&
+      Array.isArray(source.pnls) &&
+      source.pnls.length === source.dates.length
+    );
+  }
+
+  function syncWeeklyChartToDisplayedEquity(fallbackWeekly) {
+    const displayedWeekly = buildDisplayedWeeklyPnlSource();
+    if (hasRenderableWeeklyValues(displayedWeekly)) {
+      renderWeeklyPnlChart(displayedWeekly.dates, displayedWeekly.pnls, displayedWeekly);
+      return true;
+    }
+
+    const fallback = fallbackWeekly && Array.isArray(fallbackWeekly.dates) && Array.isArray(fallbackWeekly.pnls)
+      ? fallbackWeekly
+      : null;
+    renderWeeklyPnlChart(fallback ? fallback.dates : [], fallback ? fallback.pnls : []);
+    return !!(fallback && fallback.dates.length);
+  }
+
+  function renderStoredRange(range) {
+    if (!gChartSource) return false;
+
+    const eq = filterEquitySource(gChartSource.equity, range);
+    const wk = filterWeeklySource(gChartSource.weekly, range);
+
+    renderEquityChartWeekly(
+      eq ? eq.dates : [],
+      eq ? eq.totalTheo : [],
+      eq ? eq.totalAct : [],
+      eq ? eq.longTheo : [],
+      eq ? eq.longAct : [],
+      eq ? eq.shortTheo : [],
+      eq ? eq.shortAct : [],
+      !range
+    );
+
+    try {
+      return syncWeeklyChartToDisplayedEquity(wk ? { dates: wk.dates, pnls: wk.pnls } : null);
+    } catch (err) {
+      console.error('single-trades range weekly sync error', err);
+      return true;
+    }
   }
 
   function renderTrades(parsed) {
@@ -968,6 +1367,8 @@
     if (!tbody) return;
 
     tbody.innerHTML = '';
+    gChartSource = null;
+    gEquityAxisSource = null;
     renderKpi(null, null);
     renderWeeklyPnlChart([], []);
 
@@ -1072,7 +1473,7 @@
     const datesForChart = [exitDates[0] || new Date()];
     exitDates.forEach(d => datesForChart.push(d || exitDates[0]));
 
-    renderEquityChartWeekly(datesForChart, totalTheo, totalAct, longTheo, longAct, shortTheo, shortAct);
+    renderEquityChartWeekly(datesForChart, totalTheo, totalAct, longTheo, longAct, shortTheo, shortAct, true);
 
     const weekMap = {};
     for (let i = 0; i < actPnls.length; i++) {
@@ -1094,7 +1495,24 @@
       weekDatesArr.push(weekMap[k].date);
       weekPnlsArr.push(weekMap[k].sum);
     });
-    renderWeeklyPnlChart(weekDatesArr, weekPnlsArr);
+
+    gChartSource = {
+      equity: {
+        dates: datesForChart.slice(),
+        totalTheo: totalTheo.slice(),
+        totalAct: totalAct.slice(),
+        longTheo: longTheo.slice(),
+        longAct: longAct.slice(),
+        shortTheo: shortTheo.slice(),
+        shortAct: shortAct.slice()
+      },
+      weekly: {
+        dates: weekDatesArr.slice(),
+        pnls: weekPnlsArr.slice()
+      }
+    };
+
+    syncWeeklyChartToDisplayedEquity({ dates: weekDatesArr, pnls: weekPnlsArr });
   }
 
   async function readFileTextSmart(file) {
@@ -1162,6 +1580,57 @@
     if (!gFile) return false;
     await loadAndRenderFile(gFile);
     return true;
+  };
+
+  window.__singleTrades_renderRange = function (range) {
+    return renderStoredRange(range || null);
+  };
+
+  window.__singleTrades_renderAll = function () {
+    return renderStoredRange(null);
+  };
+
+  window.__singleTrades_getDisplayedAxisSource = function () {
+    if (!gEquityAxisSource) return null;
+    return {
+      dates: Array.isArray(gEquityAxisSource.dates) ? gEquityAxisSource.dates.map((d) => cloneRangeDate(d)) : [],
+      labels: Array.isArray(gEquityAxisSource.labels) ? gEquityAxisSource.labels.slice() : [],
+      tickIndexToLabel: { ...(gEquityAxisSource.tickIndexToLabel || {}) },
+      totalActVals: Array.isArray(gEquityAxisSource.totalActVals) ? gEquityAxisSource.totalActVals.slice() : [],
+      weeklyPnls: Array.isArray(gEquityAxisSource.weeklyPnls) ? gEquityAxisSource.weeklyPnls.slice() : []
+    };
+  };
+
+  window.__singleTrades_getFullAxisSource = function () {
+    if (!gChartSource || !gChartSource.equity) return null;
+
+    const equity = gChartSource.equity;
+    const weekly = gChartSource.weekly || { dates: [], pnls: [] };
+
+    return {
+      dates: Array.isArray(equity.dates) ? equity.dates.map((d) => cloneRangeDate(d)) : [],
+      totalTheo: Array.isArray(equity.totalTheo) ? equity.totalTheo.slice() : [],
+      totalAct: Array.isArray(equity.totalAct) ? equity.totalAct.slice() : [],
+      longTheo: Array.isArray(equity.longTheo) ? equity.longTheo.slice() : [],
+      longAct: Array.isArray(equity.longAct) ? equity.longAct.slice() : [],
+      shortTheo: Array.isArray(equity.shortTheo) ? equity.shortTheo.slice() : [],
+      shortAct: Array.isArray(equity.shortAct) ? equity.shortAct.slice() : [],
+      weeklyDates: Array.isArray(weekly.dates) ? weekly.dates.map((d) => cloneRangeDate(d)) : [],
+      weeklyPnls: Array.isArray(weekly.pnls) ? weekly.pnls.slice() : []
+    };
+  };
+
+  window.__singleTrades_syncWeeklyToDisplayed = function () {
+    const fallback = (
+      gChartSource &&
+      gChartSource.weekly &&
+      Array.isArray(gChartSource.weekly.dates) &&
+      Array.isArray(gChartSource.weekly.pnls)
+    ) ? {
+      dates: gChartSource.weekly.dates,
+      pnls: gChartSource.weekly.pnls
+    } : null;
+    return syncWeeklyChartToDisplayedEquity(fallback);
   };
 
   const fileInput = $('#fileInput');

@@ -8,6 +8,10 @@
 (function () {
   'use strict';
 
+  if (window.__mq0807Security && window.__mq0807Security.blocked) {
+    return;
+  }
+
   const SUPABASE_URL  = "https://byhbmmnacezzgkwfkozs.supabase.co";
   const SUPABASE_ANON = "sb_publishable_xVe8fGbqQ0XGwi4DsmjPMg_Y2RBOD3t";
   const BUCKET        = "reports";
@@ -192,6 +196,10 @@
       }
 
       fileInput.dispatchEvent(new Event('change', { bubbles: true }));
+
+      if (window.__mq0807Security && typeof window.__mq0807Security.touchSession === 'function') {
+        window.__mq0807Security.touchSession();
+      }
 
       if (window.__singleTrades_runFile) {
         window.__singleTrades_runFile(f);
